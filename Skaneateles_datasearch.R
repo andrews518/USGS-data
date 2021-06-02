@@ -8,8 +8,8 @@ library(openxlsx)
 # A) USGS parameter names are contained within a data object called parameterCdFile ----
 #   . Create a dataframe from this object and change name of parameter code column ----
 #     This will be used later to create a column of parameter names instead of codes
-paramCds <- parameterCdFile
-  names(paramCds)[1] <- "parm_cd"
+  # paramCds <- parameterCdFile[,c(1,3,6)]
+  #   names(paramCds)[c(1,3)] <- c("parm_cd", 'units')
 
 # B) Search for monitoring sites in/around Skaneateles Lake using a bounding box ----
 #    bounding box must be in order: West Lon, South Lat, East Lon, North Lat
@@ -17,7 +17,7 @@ sites <- whatNWISsites(bBox=c(-76.502778,42.716667,-76.166667,43.03335)) %>%
 #    Only pull data for lake and stream sites
   filter(site_tp_cd=='LK'|site_tp_cd=='ST')
 
-#   . Pull out a list of site codes from B ----
+#   . Pull out a list of site numbers from B ----
 #    Take a look at site query result
   head(sites)
   
@@ -43,7 +43,7 @@ sitnums <- unique(sites$site_no)
                     # negate = T returns values without the character string that was specified
                                               negate = T)])
   
-#  . Get a list of lat and long for outlier sites to check in Google Earth
+# Get a list of lat and long for outlier sites to check in Google Earth
 #     This prints to the console and lat and long have to be manually entered into 
 #     Google Earth to see where the sites fall unless the name tells us that it should
 #     be kept/removed
@@ -59,11 +59,11 @@ sitnums <- unique(sites$site_no)
   nolabel[2] # "GROUT BROOK NEAR FAIR HAVEN NY"
   nolabel[22] # "OD 178"
   
-  # Filter out sites determined to not be pertinent to study; 
+#   . Filter out sites determined to not be pertinent to study; ----
     # First make list of outlier sites to EXCLUDE
     badsites <- nolabel[c(1,3:21,23,24)] # These are sites to remove
     
-#   . Create object with info about data available from sites of interest ----
+#   . Create object with info about data available from sites of interest 
   skan_sites <- data_peek %>% 
     # only keep rows that are pertinent (station names NOT in `badsites` object)
     filter(!station_nm %in% badsites)
@@ -73,33 +73,57 @@ sitnums <- unique(sites$site_no)
   stream_dat <- skan_sites %>% 
     filter(site_tp_cd=='ST')
   
-  # Add a column with parameter names via a merge
-  stream_dat <-  merge(stream_dat, paramCds, by = "parm_cd", all.x = TRUE)
-  
   # pull out a vector of site codes for stream sites of interest
   strm_sites <- unique(stream_dat$site_no)
   
-#   . Pull out lake sites
+#   . Pull out lake sites ----
   lake_dat <- skan_sites %>% 
     filter(site_tp_cd=='LK')
-  
-  # Add a column with parameter names via a merge
-  lake_dat <-  merge(lake_dat, paramCds, by = "parm_cd", all.x = TRUE)
 
   # pull out a vector of the site codes for stream sites of interest
   lak_sites <- unique(lake_dat$site_no)
   
 # E) Data download ----
 #   . Lake Data ----
+# Use the water quality specific pull function
   lake_wqdat <- readNWISqw(siteNumber = lak_sites,
                      parameterCd = 'All') %>% 
     filter(sample_dt>='2000-01-01')
-#   - write to file----
+  
+  # Pull units from table attributes and add as column
+  lkvar_info <- attr(lake_wqdat, 'variableInfo')[,c(1,3,6)]
+    
+    # rename columns to match dataframe prior to merge
+    names(lkvar_info) <- c('parm_cd', 'parameter_name', 'units')
+    
+  # Pull site info from table attributes and add as column
+    lksite_info <- attr(lake_wqdat, 'siteInfo')[,2:3]
+    
+    # Merge to make new columns with site names
+    lake_wqdat <- merge(lake_wqdat, lksite_info, by = 'site_no', all.x = T)  
+    # Add columns with names and units using a merge
+    lake_wqdat <- merge(lake_wqdat, lkvar_info, by = 'parm_cd', all.x = T)
+
+  # Rename columns
+  lake_wqdat <- renameNWISColumns(lake_wqdat)
+    
+#     - write to file----
   # write.xlsx(lake_wqdat, file = 'USGS_Skan_lake_WQ.xlsx')
 #   . Stream Data ----  
+# Use the general pull for stream data
   final_strmdat <- readNWISdata(siteNumber = strm_sites,
                                 startDate = '2000-01-01')
-  
+  # Rename columns
   final_strmdat <- renameNWISColumns(final_strmdat) 
-#   - write to file----
+  
+  # Pull units from table attributes and add as column
+  strmvar_info <- attr(final_strmdat, 'variableInfo')
+    final_strmdat$units <- strmvar_info$unit
+    
+  # Pull site names from table attributes and add as column
+  strmsite_info <- attr(final_strmdat, 'siteInfo')[,1:2]
+    
+  # Merge to make new columns
+    final_strmdat <- merge(final_strmdat, strmsite_info, by = 'site_no', all.x = T)
+#     - write to file----
   # write.xlsx(final_strmdat, file = 'USGS_Skan_streamflow.xlsx')
